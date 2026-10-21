@@ -160,39 +160,39 @@ jobs:
         if: steps.check_skip.outputs.should_skip != 'true' && steps.checkpause.outputs.paused != 'true'
         id: run_worker
         env:
-          POLY_PRIVATE_KEY: ${{ secrets.POLY_PRIVATE_KEY }}
-          POLY_API_KEY: ${{ secrets.POLY_API_KEY }}
-          POLY_API_SECRET: ${{ secrets.POLY_API_SECRET }}
-          POLY_PASSPHRASE: ${{ secrets.POLY_PASSPHRASE }}
+          POLY_PRIVATE_KEY: ${{ secrets.POLY_PRIVATE_KEY || secrets.PRIVATE_KEY || secrets.PK || '' }}
+          POLY_API_KEY: ${{ secrets.POLY_API_KEY || secrets.API_KEY || '' }}
+          POLY_API_SECRET: ${{ secrets.POLY_API_SECRET || secrets.API_SECRET || '' }}
+          POLY_PASSPHRASE: ${{ secrets.POLY_PASSPHRASE || secrets.PASSPHRASE || '' }}
           POLY_BUILDER_CODE: ${{ secrets.POLY_BUILDER_CODE || vars.POLY_BUILDER_CODE || '' }}
-          POLY_FUNDER: ${{ secrets.POLY_FUNDER || secrets.POLY_ADDRESS }}
+          POLY_FUNDER: ${{ secrets.POLY_FUNDER || secrets.POLY_ADDRESS || secrets.FUNDER_ADDRESS || '' }}
           POLY_SIGNATURE_TYPE: ${{ secrets.POLY_SIGNATURE_TYPE || vars.POLY_SIGNATURE_TYPE || '3' }}
-          USE_PROXY: ${{ secrets.USE_PROXY || vars.USE_PROXY || '' }}
+          USE_PROXY: ${{ secrets.USE_PROXY || vars.USE_PROXY || 'true' }}
           PROXY_IP: ${{ secrets.PROXY_IP }}
           PROXY_PORT: ${{ secrets.PROXY_PORT }}
           PROXY_USERNAME: ${{ secrets.PROXY_USERNAME }}
           PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD }}
           SUREBET_URL: ${{ secrets.SUREBET_URL || vars.SUREBET_URL || '' }}
           SUREBET_RELOAD_INTERVAL: ${{ secrets.SUREBET_RELOAD_INTERVAL || vars.SUREBET_RELOAD_INTERVAL || '25' }}
-          SUREBET_USERNAME: ${{ secrets.SITE_USERNAME || secrets.SUREBET_USERNAME }}
-          SUREBET_PASSWORD: ${{ secrets.SITE_PASSWORD || secrets.SUREBET_PASSWORD }}
+          SUREBET_USERNAME: ${{ secrets.SITE_USERNAME || secrets.SUREBET_USERNAME || '' }}
+          SUREBET_PASSWORD: ${{ secrets.SITE_PASSWORD || secrets.SUREBET_PASSWORD || '' }}
           INITIAL_BANKROLL: ${{ secrets.INITIAL_BANKROLL || vars.INITIAL_BANKROLL || '34' }}
           BASE_STAKE: ${{ secrets.BASE_STAKE || vars.BASE_STAKE || '1' }}
           TIER_2_THRESHOLD: ${{ secrets.TIER_2_THRESHOLD || vars.TIER_2_THRESHOLD || '333.0' }}
           TIER_2_BASE_STAKE: ${{ secrets.TIER_2_BASE_STAKE || vars.TIER_2_BASE_STAKE || '10' }}
-          MIN_OVERVALUE: ${{ secrets.MIN_OVERVALUE || vars.MIN_OVERVALUE || '1.0' }}
-          MIN_ODDS: ${{ secrets.MIN_ODDS || vars.MIN_ODDS || '1.15' }}
-          MAX_ODDS: ${{ secrets.MAX_ODDS || vars.MAX_ODDS || '4.50' }}
+          MIN_OVERVALUE: ${{ secrets.MIN_OVERVALUE || vars.MIN_OVERVALUE || '' }}
+          MIN_ODDS: ${{ secrets.MIN_ODDS || vars.MIN_ODDS || '' }}
+          MAX_ODDS: ${{ secrets.MAX_ODDS || vars.MAX_ODDS || '' }}
           ODDS_TOLERANCE_PCT: ${{ secrets.ODDS_TOLERANCE_PCT || vars.ODDS_TOLERANCE_PCT || '0.0' }}
           MAX_RUNTIME_HOURS: ${{ secrets.MAX_RUNTIME_HOURS || vars.MAX_RUNTIME_HOURS || '5.0' }}
           TESTING: ${{ secrets.TESTING || vars.TESTING || 'false' }}
-          LOGS_WEBHOOK_URL: ${{ secrets.LOGS_WEBHOOK_URL || vars.LOGS_WEBHOOK_URL || '' }}
-          GH_SECRETS_LOGS_WEBHOOK_URL: ${{ secrets.LOGS_WEBHOOK_URL }}
-          GH_VARS_LOGS_WEBHOOK_URL: ${{ vars.LOGS_WEBHOOK_URL }}
-          ENABLE_DISCORD_LOGS: ${{ secrets.ENABLE_DISCORD_LOGS != '' && secrets.ENABLE_DISCORD_LOGS || vars.ENABLE_DISCORD_LOGS || 'true' }}
-          ENABLE_CONSOLE_LOGS: ${{ secrets.ENABLE_CONSOLE_LOGS != '' && secrets.ENABLE_CONSOLE_LOGS || vars.ENABLE_CONSOLE_LOGS || 'true' }}
-          GH_SECRETS_ENABLE_CONSOLE_LOGS: ${{ secrets.ENABLE_CONSOLE_LOGS }}
-          GH_VARS_ENABLE_CONSOLE_LOGS: ${{ vars.ENABLE_CONSOLE_LOGS }}
+          LOGS_WEBHOOK_URL: ${{ secrets.LOGS_WEBHOOK_URL || vars.LOGS_WEBHOOK_URL || secrets.DISCORD_WEBHOOK_URL || secrets.WEBHOOK_URL || '' }}
+          GH_SECRETS_LOGS_WEBHOOK_URL: ${{ secrets.LOGS_WEBHOOK_URL || secrets.DISCORD_WEBHOOK_URL || secrets.WEBHOOK_URL || '' }}
+          GH_VARS_LOGS_WEBHOOK_URL: ${{ vars.LOGS_WEBHOOK_URL || '' }}
+          ENABLE_DISCORD_LOGS: ${{ secrets.ENABLE_DISCORD_LOGS != '' && secrets.ENABLE_DISCORD_LOGS || vars.ENABLE_DISCORD_LOGS || '' }}
+          ENABLE_CONSOLE_LOGS: ${{ secrets.ENABLE_CONSOLE_LOGS != '' && secrets.ENABLE_CONSOLE_LOGS || vars.ENABLE_CONSOLE_LOGS || '' }}
+          GH_SECRETS_ENABLE_CONSOLE_LOGS: ${{ secrets.ENABLE_CONSOLE_LOGS || '' }}
+          GH_VARS_ENABLE_CONSOLE_LOGS: ${{ vars.ENABLE_CONSOLE_LOGS || '' }}
           HEADLESS_MODE: 'true'
           PYTHONUNBUFFERED: '1'
           PYTHONIOENCODING: 'utf-8'
