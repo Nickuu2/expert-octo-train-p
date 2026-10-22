@@ -173,19 +173,19 @@ jobs:
           PROXY_USERNAME: ${{ secrets.PROXY_USERNAME }}
           PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD }}
           SUREBET_URL: ${{ secrets.SUREBET_URL || vars.SUREBET_URL || '' }}
-          SUREBET_RELOAD_INTERVAL: ${{ secrets.SUREBET_RELOAD_INTERVAL || vars.SUREBET_RELOAD_INTERVAL || '25' }}
+          SUREBET_RELOAD_INTERVAL: ${{ secrets.SUREBET_RELOAD_INTERVAL || vars.SUREBET_RELOAD_INTERVAL || '' }}
           SUREBET_USERNAME: ${{ secrets.SITE_USERNAME || secrets.SUREBET_USERNAME || '' }}
           SUREBET_PASSWORD: ${{ secrets.SITE_PASSWORD || secrets.SUREBET_PASSWORD || '' }}
-          INITIAL_BANKROLL: ${{ secrets.INITIAL_BANKROLL || vars.INITIAL_BANKROLL || '34' }}
-          BASE_STAKE: ${{ secrets.BASE_STAKE || vars.BASE_STAKE || '1' }}
-          TIER_2_THRESHOLD: ${{ secrets.TIER_2_THRESHOLD || vars.TIER_2_THRESHOLD || '333.0' }}
-          TIER_2_BASE_STAKE: ${{ secrets.TIER_2_BASE_STAKE || vars.TIER_2_BASE_STAKE || '10' }}
+          INITIAL_BANKROLL: ${{ secrets.INITIAL_BANKROLL || vars.INITIAL_BANKROLL || '' }}
+          BASE_STAKE: ${{ secrets.BASE_STAKE || vars.BASE_STAKE || '' }}
+          TIER_2_THRESHOLD: ${{ secrets.TIER_2_THRESHOLD || vars.TIER_2_THRESHOLD || '' }}
+          TIER_2_BASE_STAKE: ${{ secrets.TIER_2_BASE_STAKE || vars.TIER_2_BASE_STAKE || '' }}
           MIN_OVERVALUE: ${{ secrets.MIN_OVERVALUE || vars.MIN_OVERVALUE || '' }}
           MIN_ODDS: ${{ secrets.MIN_ODDS || vars.MIN_ODDS || '' }}
           MAX_ODDS: ${{ secrets.MAX_ODDS || vars.MAX_ODDS || '' }}
-          ODDS_TOLERANCE_PCT: ${{ secrets.ODDS_TOLERANCE_PCT || vars.ODDS_TOLERANCE_PCT || '0.0' }}
-          MAX_RUNTIME_HOURS: ${{ secrets.MAX_RUNTIME_HOURS || vars.MAX_RUNTIME_HOURS || '5.0' }}
-          TESTING: ${{ secrets.TESTING || vars.TESTING || 'false' }}
+          ODDS_TOLERANCE_PCT: ${{ secrets.ODDS_TOLERANCE_PCT || vars.ODDS_TOLERANCE_PCT || '' }}
+          MAX_RUNTIME_HOURS: ${{ secrets.MAX_RUNTIME_HOURS || vars.MAX_RUNTIME_HOURS || '' }}
+          TESTING: ${{ secrets.TESTING || vars.TESTING || '' }}
           LOGS_WEBHOOK_URL: ${{ secrets.LOGS_WEBHOOK_URL || vars.LOGS_WEBHOOK_URL || secrets.DISCORD_WEBHOOK_URL || secrets.WEBHOOK_URL || '' }}
           GH_SECRETS_LOGS_WEBHOOK_URL: ${{ secrets.LOGS_WEBHOOK_URL || secrets.DISCORD_WEBHOOK_URL || secrets.WEBHOOK_URL || '' }}
           GH_VARS_LOGS_WEBHOOK_URL: ${{ vars.LOGS_WEBHOOK_URL || '' }}
@@ -227,6 +227,30 @@ jobs:
           print(f'wait_hours={wait_hours}')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f'status={status}\nreason={reason}\nwait_hours={wait_hours}\n')
+          PY
+
+      - name: Update pause window (limited)
+        if: steps.check_skip.outputs.should_skip != 'true' && steps.checkpause.outputs.paused != 'true' && steps.parse.outputs.status == 'limited_sleep'
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || github.token }}
+        run: |
+          python - <<'PY'
+          import os, time, requests
+          def set_var(token, owner, repo, name, value):
+              url = f"https://api.github.com/repos/{owner}/{repo}/actions/variables/{name}"
+              h = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+              r = requests.patch(url, headers=h, json={"name": name, "value": value})
+              if r.status_code == 404:
+                  url2 = f"https://api.github.com/repos/{owner}/{repo}/actions/variables"
+                  requests.post(url2, headers=h, json={"name": name, "value": value})
+          token = os.environ.get('GH_TOKEN')
+          repo_full = os.environ.get('GITHUB_REPOSITORY', '')
+          if token and '/' in repo_full:
+              owner, repo = repo_full.split('/')
+              hours = float('${{ steps.parse.outputs.wait_hours }}' or '12')
+              pause_until = str(int(time.time() + hours * 3600))
+              set_var(token, owner, repo, 'PAUSE_UNTIL', pause_until)
+              print(f"✅ Set PAUSE_UNTIL={pause_until} ({hours} hours pause)")
           PY
 
       - name: Encrypt & Save Cache
@@ -320,7 +344,7 @@ jobs:
           PY
 
       - name: Trigger Next Run (24/7 Perpetual Auto-Chaining)
-        if: always() && steps.check_skip.outputs.should_skip != 'true' && steps.checkpause.outputs.paused != 'true'
+        if: always() && steps.check_skip.outputs.should_skip != 'true' && steps.checkpause.outputs.paused != 'true' && steps.parse.outputs.status != 'limited_sleep'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || github.token }}
