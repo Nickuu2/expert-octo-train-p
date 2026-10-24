@@ -131,6 +131,9 @@ jobs:
         with:
           path: |
             worker_data.json.gpg
+            paper_trades.json.gpg
+            worker_data.json
+            paper_trades.json
             playwright_user_data.zip.gpg
           key: persistent-data-sync-${{ github.run_number }}
           restore-keys: |
@@ -145,6 +148,11 @@ jobs:
               gpg --quiet --batch --yes --decrypt --passphrase "$GPG_PASSPHRASE" \
               --output worker_data.json worker_data.json.gpg
               echo "✅ Decrypted persistent worker_data.json"
+            fi
+            if [ -f paper_trades.json.gpg ]; then
+              gpg --quiet --batch --yes --decrypt --passphrase "$GPG_PASSPHRASE" \
+              --output paper_trades.json paper_trades.json.gpg
+              echo "✅ Decrypted persistent paper_trades.json"
             fi
             if [ -f playwright_user_data.zip.gpg ]; then
               gpg --quiet --batch --yes --decrypt --passphrase "$GPG_PASSPHRASE" \
@@ -185,6 +193,8 @@ jobs:
           MAX_ODDS: ${{ secrets.MAX_ODDS || vars.MAX_ODDS || '' }}
           ODDS_TOLERANCE_PCT: ${{ secrets.ODDS_TOLERANCE_PCT || vars.ODDS_TOLERANCE_PCT || '' }}
           MAX_RUNTIME_HOURS: ${{ secrets.MAX_RUNTIME_HOURS || vars.MAX_RUNTIME_HOURS || '' }}
+          MONITOR_ONLY: ${{ secrets.MONITOR_ONLY || vars.MONITOR_ONLY || '' }}
+          PAPER_STAKE: ${{ secrets.PAPER_STAKE || vars.PAPER_STAKE || '' }}
           TESTING: ${{ secrets.TESTING || vars.TESTING || '' }}
           LOGS_WEBHOOK_URL: ${{ secrets.LOGS_WEBHOOK_URL || vars.LOGS_WEBHOOK_URL || secrets.DISCORD_WEBHOOK_URL || secrets.WEBHOOK_URL || '' }}
           GH_SECRETS_LOGS_WEBHOOK_URL: ${{ secrets.LOGS_WEBHOOK_URL || secrets.DISCORD_WEBHOOK_URL || secrets.WEBHOOK_URL || '' }}
@@ -265,6 +275,11 @@ jobs:
               --output worker_data.json.gpg worker_data.json
               echo "✅ Encrypted worker_data.json"
             fi
+            if [ -f paper_trades.json ]; then
+              gpg --quiet --batch --yes --symmetric --passphrase "$GPG_PASSPHRASE" \
+              --output paper_trades.json.gpg paper_trades.json
+              echo "✅ Encrypted paper_trades.json"
+            fi
             if [ -d playwright_user_data ]; then
               if command -v zip >/dev/null 2>&1; then
                 zip -rq playwright_user_data.zip playwright_user_data
@@ -284,6 +299,9 @@ jobs:
         with:
           path: |
             worker_data.json.gpg
+            paper_trades.json.gpg
+            worker_data.json
+            paper_trades.json
             playwright_user_data.zip.gpg
           key: persistent-data-sync-${{ github.run_number }}
 
