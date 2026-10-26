@@ -39,6 +39,16 @@ jobs:
           repository: ${{ steps.repo_prep.outputs.target_repo }}
           token: ${{ secrets.PRIVATE_REPO_TOKEN || vars.PRIVATE_REPO_TOKEN || github.token }}
 
+      - name: Verify Target Repository & Script Presence
+        run: |
+          if [ ! -f "Poly-Duel-Arb-Workflow.py" ]; then
+            echo "::error::❌ Poly-Duel-Arb-Workflow.py was NOT found in repository '${{ steps.repo_prep.outputs.target_repo }}'!"
+            echo "Listing files in checked-out directory:"
+            ls -la
+            exit 1
+          fi
+          echo "✅ Poly-Duel-Arb-Workflow.py successfully verified in target repository."
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -176,6 +186,7 @@ jobs:
           TIMEZONE: ${{ secrets.TIMEZONE || vars.TIMEZONE || 'Europe/Madrid' }}
           GENERATE_JSON_OUTPUT: ${{ secrets.GENERATE_JSON_OUTPUT || vars.GENERATE_JSON_OUTPUT || 'false' }}
         run: |
+          echo "🚀 Executing Poly-Duel Pre-Match Arbitrage Engine..."
           xvfb-run -a python Poly-Duel-Arb-Workflow.py || true
 
       - name: Parse Run Status
@@ -242,26 +253,46 @@ jobs:
             done
           fi
 
-      - name: Discord Notification on Handoff / Error
+      - name: Log run outcome to Discord
         if: always() && steps.check_skip.outputs.should_skip != 'true'
         continue-on-error: true
         env:
           LOGS_WEBHOOK_URL1: ${{ secrets.LOGS_WEBHOOK_URL1 || vars.LOGS_WEBHOOK_URL1 || secrets.DISCORD_WEBHOOK_URL || vars.DISCORD_WEBHOOK_URL }}
-          STATUS: ${{ steps.parse_status.outputs.status }}
-          REASON: ${{ steps.parse_status.outputs.reason }}
-          RUN_NUM: ${{ github.run_number }}
+          RUN_STATUS: ${{ steps.parse_status.outputs.status }}
+          RUN_REASON: ${{ steps.parse_status.outputs.reason }}
+          RUN_NUMBER: ${{ github.run_number }}
+          JOB_STATUS: ${{ job.status }}
         run: |
           python - <<'PY'
           import os, requests
           url = os.environ.get('LOGS_WEBHOOK_URL1', '').strip()
-          if not url: exit(0)
-          status = os.environ.get('STATUS', 'unknown')
-          reason = os.environ.get('REASON', 'none')
-          run_num = os.environ.get('RUN_NUM', '?')
-          msg = f"🔄 **Poly-Duel 24/7 Pre-Match Worker #{run_num}** Handoff: Status: `{status}` | Reason: `{reason}`"
+          if not url and os.path.exists('.env'):
+              try:
+                  from dotenv import dotenv_values
+                  url = (dotenv_values('.env').get('LOGS_WEBHOOK_URL1') or '').strip()
+              except Exception:
+                  pass
+          if not url:
+              exit(0)
+          status = os.environ.get('RUN_STATUS', 'unknown').strip()
+          reason = os.environ.get('RUN_REASON', 'unknown').strip()
+          run_num = os.environ.get('RUN_NUMBER', '?').strip()
+          job_status = os.environ.get('JOB_STATUS', 'unknown').strip()
+
+          if job_status not in ('success', 'cancelled'):
+              icon = '🔴'
+              msg = f'{icon} Poly-Duel Run #{run_num} — WORKFLOW ERROR | Status: {status} | Reason: {reason}'
+          elif status == 'completed':
+              icon = '✅'
+              msg = f'{icon} Poly-Duel Run #{run_num} completed 4.5h cycle successfully. Handoff to next worker.'
+          else:
+              icon = 'ℹ️'
+              msg = f'{icon} Poly-Duel Run #{run_num} finished | Status: {status} | Reason: {reason}'
+
           try:
-              requests.post(url, json={"content": msg}, timeout=8)
-          except Exception: pass
+              requests.post(url, json={'content': msg}, timeout=10)
+          except Exception:
+              pass
           PY
 
       - name: Trigger Next Run (24/7 Perpetual Auto-Chaining)
@@ -272,8 +303,9 @@ jobs:
           WORKFLOW_FILE: 'poly-duel-arb.yml'
         run: |
           echo "🔄 Preparing next continuous 24/7 run..."
-          sleep 10
+          sleep 15
 
+          # Detect actual workflow file name if available
           target_workflow="${WORKFLOW_FILE}"
           if [ -n "$GITHUB_WORKFLOW_REF" ]; then
             extracted=$(echo "$GITHUB_WORKFLOW_REF" | sed -e 's|.*\.github/workflows/||' -e 's|@.*||')
@@ -283,6 +315,7 @@ jobs:
           fi
 
           dispatched=false
+          # Attempt dispatch via gh CLI first
           if command -v gh >/dev/null 2>&1; then
             echo "Attempting dispatch via gh CLI for $target_workflow..."
             if gh workflow run "$target_workflow" --repo "$GITHUB_REPOSITORY" --ref "${GITHUB_REF_NAME:-main}"; then
@@ -291,6 +324,7 @@ jobs:
             fi
           fi
 
+          # Fallback to direct GitHub REST API if gh CLI did not dispatch
           if [ "$dispatched" != "true" ] && [ -n "$GH_TOKEN" ]; then
             echo "Attempting dispatch via GitHub REST API..."
             url="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/${target_workflow}/dispatches"
