@@ -169,7 +169,7 @@ jobs:
           # Notifications, Output Logs & Timezone
           ENABLE_CONSOLE_LOGS: ${{ secrets.ENABLE_CONSOLE_LOGS != '' && secrets.ENABLE_CONSOLE_LOGS || vars.ENABLE_CONSOLE_LOGS || 'true' }}
           ENABLE_DISCORD_ALERTS: ${{ secrets.ENABLE_DISCORD_ALERTS != '' && secrets.ENABLE_DISCORD_ALERTS || vars.ENABLE_DISCORD_ALERTS || 'true' }}
-          LOGS_WEBHOOK_URL: ${{ secrets.LOGS_WEBHOOK_URL || vars.LOGS_WEBHOOK_URL || secrets.GH_SECRETS_LOGS_WEBHOOK_URL || vars.GH_VARS_LOGS_WEBHOOK_URL || secrets.DISCORD_WEBHOOK_URL || vars.DISCORD_WEBHOOK_URL }}
+          LOGS_WEBHOOK_URL1: ${{ secrets.LOGS_WEBHOOK_URL1 || vars.LOGS_WEBHOOK_URL1 || secrets.GH_SECRETS_LOGS_WEBHOOK_URL1 || vars.GH_VARS_LOGS_WEBHOOK_URL1 || secrets.DISCORD_WEBHOOK_URL || vars.DISCORD_WEBHOOK_URL }}
           PYTHONUNBUFFERED: '1'
           PYTHONIOENCODING: 'utf-8'
           GITHUB_ACTIONS: 'true'
@@ -246,14 +246,14 @@ jobs:
         if: always() && steps.check_skip.outputs.should_skip != 'true'
         continue-on-error: true
         env:
-          LOGS_WEBHOOK_URL: ${{ secrets.LOGS_WEBHOOK_URL || vars.LOGS_WEBHOOK_URL || secrets.DISCORD_WEBHOOK_URL || vars.DISCORD_WEBHOOK_URL }}
+          LOGS_WEBHOOK_URL1: ${{ secrets.LOGS_WEBHOOK_URL1 || vars.LOGS_WEBHOOK_URL1 || secrets.DISCORD_WEBHOOK_URL || vars.DISCORD_WEBHOOK_URL }}
           STATUS: ${{ steps.parse_status.outputs.status }}
           REASON: ${{ steps.parse_status.outputs.reason }}
           RUN_NUM: ${{ github.run_number }}
         run: |
           python - <<'PY'
           import os, requests
-          url = os.environ.get('LOGS_WEBHOOK_URL', '').strip()
+          url = os.environ.get('LOGS_WEBHOOK_URL1', '').strip()
           if not url: exit(0)
           status = os.environ.get('STATUS', 'unknown')
           reason = os.environ.get('REASON', 'none')
