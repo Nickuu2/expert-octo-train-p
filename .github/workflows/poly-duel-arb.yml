@@ -1,4 +1,4 @@
-name: Poly-Duel 24/7 Pre-Match Arb Worker
+name: Pre-Match Arb Worker
 
 on:
   schedule:
