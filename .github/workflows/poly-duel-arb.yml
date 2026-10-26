@@ -47,7 +47,13 @@ jobs:
             ls -la
             exit 1
           fi
-          echo "✅ Poly-Duel-Arb-Workflow.py successfully verified in target repository."
+          if [ ! -d "market_mappers" ]; then
+            echo "::error::❌ 'market_mappers' folder was NOT found in repository '${{ steps.repo_prep.outputs.target_repo }}'! The engine requires the market_mappers folder for sports mapping."
+            echo "Listing files in checked-out directory:"
+            ls -la
+            exit 1
+          fi
+          echo "✅ Poly-Duel-Arb-Workflow.py and market_mappers/ successfully verified in target repository."
 
       - uses: actions/setup-python@v5
         with:
@@ -90,16 +96,6 @@ jobs:
           echo "should_skip=$should_skip" >> $GITHUB_OUTPUT
           if [ "$should_skip" == "true" ]; then
             echo "⚠️ Job is configured to be skipped."
-          fi
-
-      - name: Write auth_state.json from secret
-        if: steps.check_skip.outputs.should_skip != 'true'
-        env:
-          AUTH_STATE_JSON: ${{ secrets.AUTH_STATE_JSON }}
-        run: |
-          if [ -n "$AUTH_STATE_JSON" ]; then
-            echo "$AUTH_STATE_JSON" > auth_state.json
-            echo "✅ auth_state.json restored from secret."
           fi
 
       - name: Restore & Decrypt Persistent Data & Profile Cache
