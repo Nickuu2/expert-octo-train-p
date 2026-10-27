@@ -104,12 +104,11 @@ jobs:
         id: cache-restore
         with:
           path: |
-            worker_data.json.gpg
-            playwright_user_data.zip.gpg
+            poly_duel_data.json.gpg
+            playwright_duel_data.zip.gpg
           key: persistent-poly-duel-${{ github.run_number }}
           restore-keys: |
             persistent-poly-duel-
-            persistent-data-arb-
 
       - name: Decrypt Persistent Data
         if: steps.check_skip.outputs.should_skip != 'true'
@@ -117,17 +116,17 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           if [ -n "$GPG_PASSPHRASE" ]; then
-            if [ -f worker_data.json.gpg ]; then
+            if [ -f poly_duel_data.json.gpg ]; then
               gpg --quiet --batch --yes --decrypt --passphrase "$GPG_PASSPHRASE" \
-              --output worker_data.json worker_data.json.gpg || true
-              echo "✅ Decrypted worker_data.json"
+              --output poly_duel_data.json poly_duel_data.json.gpg || true
+              echo "✅ Decrypted persistent poly_duel_data.json"
             fi
-            if [ -f playwright_user_data.zip.gpg ]; then
+            if [ -f playwright_duel_data.zip.gpg ]; then
               gpg --quiet --batch --yes --decrypt --passphrase "$GPG_PASSPHRASE" \
-              --output playwright_user_data.zip playwright_user_data.zip.gpg || true
-              if [ -f playwright_user_data.zip ]; then
-                unzip -q -o playwright_user_data.zip || true
-                echo "✅ Decrypted and restored browser profile"
+              --output playwright_duel_data.zip playwright_duel_data.zip.gpg || true
+              if [ -f playwright_duel_data.zip ]; then
+                unzip -q -o playwright_duel_data.zip || true
+                echo "✅ Decrypted and restored Duel browser profile"
               fi
             fi
           fi
@@ -213,16 +212,16 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           if [ -n "$GPG_PASSPHRASE" ]; then
-            if [ -f worker_data.json ]; then
+            if [ -f poly_duel_data.json ]; then
               gpg --quiet --batch --yes --symmetric --passphrase "$GPG_PASSPHRASE" \
-              --output worker_data.json.gpg worker_data.json
-              echo "✅ Encrypted worker_data.json"
+              --output poly_duel_data.json.gpg poly_duel_data.json
+              echo "✅ Encrypted persistent poly_duel_data.json"
             fi
-            if [ -d playwright_user_data ]; then
-              zip -rq playwright_user_data.zip playwright_user_data
+            if [ -d playwright_duel_data ]; then
+              zip -rq playwright_duel_data.zip playwright_duel_data
               gpg --quiet --batch --yes --symmetric --passphrase "$GPG_PASSPHRASE" \
-              --output playwright_user_data.zip.gpg playwright_user_data.zip
-              echo "✅ Encrypted browser profile"
+              --output playwright_duel_data.zip.gpg playwright_duel_data.zip
+              echo "✅ Encrypted Duel browser profile"
             fi
           fi
 
@@ -231,8 +230,8 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            worker_data.json.gpg
-            playwright_user_data.zip.gpg
+            poly_duel_data.json.gpg
+            playwright_duel_data.zip.gpg
           key: persistent-poly-duel-${{ github.run_number }}
 
       - name: Cleanup Old Caches
@@ -308,6 +307,9 @@ jobs:
             if [ -n "$extracted" ]; then
               target_workflow="$extracted"
             fi
+          fi
+          if [ -z "$target_workflow" ]; then
+            target_workflow="poly-duel-arb.yml"
           fi
 
           dispatched=false
