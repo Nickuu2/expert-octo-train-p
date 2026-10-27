@@ -85,7 +85,11 @@ jobs:
           SKIP_JOB_ENV: ${{ secrets.SKIP_JOB || vars.SKIP_JOB }}
         run: |
           should_skip="false"
-          if [ -f .env ]; then
+          if [ -f .env.poly_duel ]; then
+            if grep -q "SKIP_JOB=true" .env.poly_duel; then
+              should_skip="true"
+            fi
+          elif [ -f .env ]; then
             if grep -q "SKIP_JOB=true" .env; then
               should_skip="true"
             fi
@@ -131,34 +135,44 @@ jobs:
             fi
           fi
 
+      - name: Write .env.poly_duel from secret if configured
+        if: steps.check_skip.outputs.should_skip != 'true'
+        env:
+          ENV_POLY_DUEL_SECRET: ${{ secrets.ENV_POLY_DUEL || secrets.POLY_DUEL_ENV || '' }}
+        run: |
+          if [ -n "$ENV_POLY_DUEL_SECRET" ]; then
+            echo "$ENV_POLY_DUEL_SECRET" > .env.poly_duel
+            echo "✅ Written .env.poly_duel from repository secret"
+          fi
+
       - name: Run Poly-Duel Pre-Match Arbitrage Engine
         if: steps.check_skip.outputs.should_skip != 'true'
         id: run_engine
         env:
-          EXECUTION_MODE: ${{ secrets.EXECUTION_MODE || vars.EXECUTION_MODE || 'ALERT_ONLY' }}
-          TESTING: ${{ secrets.TESTING || vars.TESTING || 'false' }}
-          HEADLESS_MODE: 'false'
-          MAX_RUNTIME_HOURS: ${{ secrets.MAX_RUNTIME_HOURS || vars.MAX_RUNTIME_HOURS || '4.5' }}
-          SCAN_INTERVAL_SECONDS: ${{ secrets.SCAN_INTERVAL_SECONDS || vars.SCAN_INTERVAL_SECONDS || '30' }}
-          SILENT_SCAN: ${{ secrets.SILENT_SCAN || vars.SILENT_SCAN || 'true' }}
-          MIN_ARB_THRESHOLD: ${{ secrets.MIN_ARB_THRESHOLD || vars.MIN_ARB_THRESHOLD || '1.0' }}
-          MAX_ARB_THRESHOLD: ${{ secrets.MAX_ARB_THRESHOLD || vars.MAX_ARB_THRESHOLD || '15.0' }}
-          MAX_ODDS_AGE_SECONDS: ${{ secrets.MAX_ODDS_AGE_SECONDS || vars.MAX_ODDS_AGE_SECONDS || '60.0' }}
-          ARB_COOLDOWN_SECONDS: ${{ secrets.ARB_COOLDOWN_SECONDS || vars.ARB_COOLDOWN_SECONDS || '900' }}
-          TOTAL_STAKE_AMOUNT: ${{ secrets.TOTAL_STAKE_AMOUNT || vars.TOTAL_STAKE_AMOUNT || '50.0' }}
-          MIN_BALANCE: ${{ secrets.MIN_BALANCE || vars.MIN_BALANCE || '10.0' }}
-          SIMULATE_BET_PLACEMENT: ${{ secrets.SIMULATE_BET_PLACEMENT || vars.SIMULATE_BET_PLACEMENT || 'false' }}
+          EXECUTION_MODE: ${{ secrets.EXECUTION_MODE || vars.EXECUTION_MODE || '' }}
+          TESTING: ${{ secrets.TESTING != '' && (secrets.TESTING || vars.TESTING) || '' }}
+          HEADLESS_MODE: ${{ secrets.HEADLESS_MODE != '' && (secrets.HEADLESS_MODE || vars.HEADLESS_MODE) || 'false' }}
+          MAX_RUNTIME_HOURS: ${{ secrets.MAX_RUNTIME_HOURS || vars.MAX_RUNTIME_HOURS || '' }}
+          SCAN_INTERVAL_SECONDS: ${{ secrets.SCAN_INTERVAL_SECONDS || vars.SCAN_INTERVAL_SECONDS || '' }}
+          SILENT_SCAN: ${{ secrets.SILENT_SCAN != '' && (secrets.SILENT_SCAN || vars.SILENT_SCAN) || '' }}
+          MIN_ARB_THRESHOLD: ${{ secrets.MIN_ARB_THRESHOLD || vars.MIN_ARB_THRESHOLD || '' }}
+          MAX_ARB_THRESHOLD: ${{ secrets.MAX_ARB_THRESHOLD || vars.MAX_ARB_THRESHOLD || '' }}
+          MAX_ODDS_AGE_SECONDS: ${{ secrets.MAX_ODDS_AGE_SECONDS || vars.MAX_ODDS_AGE_SECONDS || '' }}
+          ARB_COOLDOWN_SECONDS: ${{ secrets.ARB_COOLDOWN_SECONDS || vars.ARB_COOLDOWN_SECONDS || '' }}
+          TOTAL_STAKE_AMOUNT: ${{ secrets.TOTAL_STAKE_AMOUNT || vars.TOTAL_STAKE_AMOUNT || '' }}
+          MIN_BALANCE: ${{ secrets.MIN_BALANCE || vars.MIN_BALANCE || '' }}
+          SIMULATE_BET_PLACEMENT: ${{ secrets.SIMULATE_BET_PLACEMENT != '' && (secrets.SIMULATE_BET_PLACEMENT || vars.SIMULATE_BET_PLACEMENT) || '' }}
           # Duel Credentials & 2FA
           DUEL_USERNAME: ${{ secrets.DUEL_USERNAME || secrets.SITE_USERNAME || vars.DUEL_USERNAME || vars.SITE_USERNAME }}
           DUEL_PASSWORD: ${{ secrets.DUEL_PASSWORD || secrets.SITE_PASSWORD || vars.DUEL_PASSWORD || vars.SITE_PASSWORD }}
           DUEL_AUTH_SECRET: ${{ secrets.DUEL_AUTH_SECRET || secrets.GOOGLE_AUTH_SECRET || vars.DUEL_AUTH_SECRET || vars.GOOGLE_AUTH_SECRET }}
-          DUEL_BRAND_ID: ${{ secrets.DUEL_BRAND_ID || vars.DUEL_BRAND_ID || '2482975601191952386' }}
-          DUEL_SPORTS_URL: ${{ secrets.DUEL_SPORTS_URL || vars.DUEL_SPORTS_URL || 'https://duel.com/sports' }}
-          DUEL_CURRENCY: ${{ secrets.DUEL_CURRENCY || vars.DUEL_CURRENCY || 'USDT' }}
+          DUEL_BRAND_ID: ${{ secrets.DUEL_BRAND_ID || vars.DUEL_BRAND_ID || '' }}
+          DUEL_SPORTS_URL: ${{ secrets.DUEL_SPORTS_URL || vars.DUEL_SPORTS_URL || '' }}
+          DUEL_CURRENCY: ${{ secrets.DUEL_CURRENCY || vars.DUEL_CURRENCY || '' }}
           # Polymarket Credentials & CLOB Key
-          POLY_HOST: ${{ secrets.POLY_HOST || vars.POLY_HOST || 'https://clob.polymarket.com' }}
-          POLY_GAMMA_API: ${{ secrets.POLY_GAMMA_API || vars.POLY_GAMMA_API || 'https://gamma-api.polymarket.com' }}
-          POLY_CHAIN_ID: ${{ secrets.POLY_CHAIN_ID || vars.POLY_CHAIN_ID || '137' }}
+          POLY_HOST: ${{ secrets.POLY_HOST || vars.POLY_HOST || '' }}
+          POLY_GAMMA_API: ${{ secrets.POLY_GAMMA_API || vars.POLY_GAMMA_API || '' }}
+          POLY_CHAIN_ID: ${{ secrets.POLY_CHAIN_ID || vars.POLY_CHAIN_ID || '' }}
           POLY_PRIVATE_KEY: ${{ secrets.POLY_PRIVATE_KEY || secrets.PK || vars.POLY_PRIVATE_KEY || vars.PK }}
           POLY_FUNDER: ${{ secrets.POLY_FUNDER || secrets.POLY_ADDRESS || vars.POLY_FUNDER || vars.POLY_ADDRESS }}
           POLY_API_KEY: ${{ secrets.POLY_API_KEY || vars.POLY_API_KEY }}
@@ -172,14 +186,14 @@ jobs:
           PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD || vars.PROXY_PASSWORD }}
           PROXY_URL: ${{ secrets.PROXY_URL || vars.PROXY_URL }}
           # Notifications, Output Logs & Timezone
-          ENABLE_CONSOLE_LOGS: ${{ secrets.ENABLE_CONSOLE_LOGS != '' && secrets.ENABLE_CONSOLE_LOGS || vars.ENABLE_CONSOLE_LOGS || 'true' }}
-          ENABLE_DISCORD_ALERTS: ${{ secrets.ENABLE_DISCORD_ALERTS != '' && secrets.ENABLE_DISCORD_ALERTS || vars.ENABLE_DISCORD_ALERTS || 'true' }}
+          ENABLE_CONSOLE_LOGS: ${{ secrets.ENABLE_CONSOLE_LOGS != '' && (secrets.ENABLE_CONSOLE_LOGS || vars.ENABLE_CONSOLE_LOGS) || '' }}
+          ENABLE_DISCORD_ALERTS: ${{ secrets.ENABLE_DISCORD_ALERTS != '' && (secrets.ENABLE_DISCORD_ALERTS || vars.ENABLE_DISCORD_ALERTS) || '' }}
           LOGS_WEBHOOK_URL1: ${{ secrets.LOGS_WEBHOOK_URL1 || vars.LOGS_WEBHOOK_URL1 || secrets.GH_SECRETS_LOGS_WEBHOOK_URL1 || vars.GH_VARS_LOGS_WEBHOOK_URL1 || secrets.DISCORD_WEBHOOK_URL || vars.DISCORD_WEBHOOK_URL }}
           PYTHONUNBUFFERED: '1'
           PYTHONIOENCODING: 'utf-8'
           GITHUB_ACTIONS: 'true'
-          TIMEZONE: ${{ secrets.TIMEZONE || vars.TIMEZONE || 'Europe/Madrid' }}
-          GENERATE_JSON_OUTPUT: ${{ secrets.GENERATE_JSON_OUTPUT || vars.GENERATE_JSON_OUTPUT || 'false' }}
+          TIMEZONE: ${{ secrets.TIMEZONE || vars.TIMEZONE || '' }}
+          GENERATE_JSON_OUTPUT: ${{ secrets.GENERATE_JSON_OUTPUT != '' && (secrets.GENERATE_JSON_OUTPUT || vars.GENERATE_JSON_OUTPUT) || '' }}
         run: |
           echo "🚀 Executing Poly-Duel Pre-Match Arbitrage Engine..."
           xvfb-run -a python Poly-Duel-Arb-Workflow.py || true
@@ -261,12 +275,14 @@ jobs:
           python - <<'PY'
           import os, requests
           url = os.environ.get('LOGS_WEBHOOK_URL1', '').strip()
-          if not url and os.path.exists('.env'):
-              try:
-                  from dotenv import dotenv_values
-                  url = (dotenv_values('.env').get('LOGS_WEBHOOK_URL1') or '').strip()
-              except Exception:
-                  pass
+          for ef in ('.env.poly_duel', '.env.poly', '.env'):
+              if not url and os.path.exists(ef):
+                  try:
+                      from dotenv import dotenv_values
+                      d = dotenv_values(ef)
+                      url = (d.get('LOGS_WEBHOOK_URL1') or d.get('LOGS_WEBHOOK_URL') or d.get('DISCORD_WEBHOOK_URL') or '').strip()
+                  except Exception:
+                      pass
           if not url:
               exit(0)
           status = os.environ.get('RUN_STATUS', 'unknown').strip()
