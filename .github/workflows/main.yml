@@ -1,4 +1,4 @@
-name: Worker
+name: Polymarket Valuebet Worker
 
 on:
   schedule:
@@ -22,23 +22,32 @@ jobs:
           RAW_REPO: ${{ secrets.PRIVATE_REPO_NAME || vars.PRIVATE_REPO_NAME }}
           HAS_TOKEN: ${{ (secrets.PRIVATE_REPO_TOKEN != '' || vars.PRIVATE_REPO_TOKEN != '') && 'true' || 'false' }}
         run: |
-          if [ "$HAS_TOKEN" != "true" ]; then
-            echo "::error::❌ PRIVATE_REPO_TOKEN secret is missing! Please configure PRIVATE_REPO_TOKEN with your GitHub PAT."
-            exit 1
+          if [ "$HAS_TOKEN" = "true" ] && [ -n "$RAW_REPO" ]; then
+            CLEAN_REPO=$(echo "$RAW_REPO" | sed -e 's|https://github.com/||g' -e 's|http://github.com/||g' -e 's|\.git$||g' -e 's|^/||g' -e 's|/$||g')
+            echo "target_repo=$CLEAN_REPO" >> $GITHUB_OUTPUT
+            echo "use_custom_repo=true" >> $GITHUB_OUTPUT
+            echo "✅ Configured to checkout repository: $CLEAN_REPO"
+          else
+            echo "target_repo=${{ github.repository }}" >> $GITHUB_OUTPUT
+            echo "use_custom_repo=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ Using default repository checkout: ${{ github.repository }}"
           fi
-          if [ -z "$RAW_REPO" ]; then
-            echo "::error::❌ PRIVATE_REPO_NAME is missing! Please configure PRIVATE_REPO_NAME with format 'owner/repo-name'."
-            exit 1
-          fi
-          CLEAN_REPO=$(echo "$RAW_REPO" | sed -e 's|https://github.com/||g' -e 's|http://github.com/||g' -e 's|\.git$||g' -e 's|^/||g' -e 's|/$||g')
-          echo "target_repo=$CLEAN_REPO" >> $GITHUB_OUTPUT
-          echo "✅ Configured to checkout repository: $CLEAN_REPO"
 
-      - name: Checkout Private Repo
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           repository: ${{ steps.repo_prep.outputs.target_repo }}
-          token: ${{ secrets.PRIVATE_REPO_TOKEN || vars.PRIVATE_REPO_TOKEN }}
+          token: ${{ secrets.PRIVATE_REPO_TOKEN || vars.PRIVATE_REPO_TOKEN || github.token }}
+
+      - name: Verify Target Repository & Script Presence
+        run: |
+          if [ ! -f "Polymarket-Workflow.py" ]; then
+            echo "::error::❌ Polymarket-Workflow.py was NOT found in repository '${{ steps.repo_prep.outputs.target_repo }}'!"
+            echo "Listing files in checked-out directory:"
+            ls -la
+            exit 1
+          fi
+          echo "✅ Polymarket-Workflow.py successfully verified in target repository."
 
       - uses: actions/setup-python@v5
         with:
@@ -208,9 +217,11 @@ jobs:
           PYTHONIOENCODING: 'utf-8'
           GITHUB_ACTIONS: 'true'
         run: |
-          TARGET_SCRIPT="${WORKER_SCRIPT:-$(find . -maxdepth 1 -name '*Workflow.py' -o -name '*worker*.py' -o -name 'main.py' | head -n 1)}"
-          if [ -z "$TARGET_SCRIPT" ] || [ ! -f "$TARGET_SCRIPT" ]; then
-            TARGET_SCRIPT=$(find . -maxdepth 1 -name "*.py" ! -name "test*" | head -n 1)
+          TARGET_SCRIPT="Polymarket-Workflow.py"
+          if [ ! -f "$TARGET_SCRIPT" ]; then
+            echo "::error::❌ $TARGET_SCRIPT was NOT found in checked-out directory!"
+            ls -la
+            exit 1
           fi
           echo "Executing target script: $TARGET_SCRIPT"
           xvfb-run -a python "$TARGET_SCRIPT" || true
@@ -347,13 +358,13 @@ jobs:
           
           if job_status not in ('success', 'cancelled'):
               icon = '🔴'
-              msg = f'{icon} Worker Run #{run_num} — WORKFLOW ERROR | Status: {status} | Reason: {reason}'
+              msg = f'{icon} Polymarket Run #{run_num} — WORKFLOW ERROR | Status: {status} | Reason: {reason}'
           elif status == 'completed':
               icon = '✅'
-              msg = f'{icon} Worker Run #{run_num} completed successfully.'
+              msg = f'{icon} Polymarket Run #{run_num} completed successfully.'
           else:
               icon = 'ℹ️'
-              msg = f'{icon} Worker Run #{run_num} finished | Status: {status} | Reason: {reason}'
+              msg = f'{icon} Polymarket Run #{run_num} finished | Status: {status} | Reason: {reason}'
           
           try:
               requests.post(url, json={'content': msg}, timeout=10)
@@ -366,20 +377,20 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || github.token }}
-          WORKFLOW_FILE: ${{ secrets.WORKFLOW_FILE || vars.WORKFLOW_FILE || '' }}
+          WORKFLOW_FILE: 'Polymarket-Workflow.yml'
         run: |
-          echo "🔄 Preparing next continuous 24/7 run for Worker..."
+          echo "🔄 Preparing next continuous 24/7 run for Polymarket Worker..."
           sleep 15
 
           target_workflow="${WORKFLOW_FILE}"
-          if [ -z "$target_workflow" ] && [ -n "$GITHUB_WORKFLOW_REF" ]; then
+          if [ -n "$GITHUB_WORKFLOW_REF" ]; then
             extracted=$(echo "$GITHUB_WORKFLOW_REF" | sed -e 's|.*\.github/workflows/||' -e 's|@.*||')
             if [ -n "$extracted" ]; then
               target_workflow="$extracted"
             fi
           fi
           if [ -z "$target_workflow" ]; then
-            target_workflow="${GITHUB_WORKFLOW:-worker.yml}"
+            target_workflow="Polymarket-Workflow.yml"
           fi
 
           dispatched=false
