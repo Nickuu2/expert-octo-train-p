@@ -169,6 +169,26 @@ jobs:
           PY
           )
           echo "::add-mask::$PROXY_URL"
+          # A non-sensitive display value for the single Discord startup
+          # notice: enough to confirm which proxy route was selected without
+          # exposing credentials or the full host/port.
+          ARB_PROXY_DISPLAY=$(python - <<'PY'
+          import os
+          host = os.environ['PROXY_IP'].strip()
+          port = os.environ['PROXY_PORT'].strip()
+          def mask_host(value):
+              pieces = value.split('.')
+              if len(pieces) == 4 and all(piece.isdigit() for piece in pieces):
+                  return '***.***.***.' + pieces[-1]
+              if len(value) <= 4:
+                  return '*' * len(value)
+              return value[:2] + '***' + value[-2:]
+          def mask_port(value):
+              return '*' * max(1, len(value) - 2) + value[-2:]
+          print(f"proxy {mask_host(host)}:{mask_port(port)}")
+          PY
+          )
+          export ARB_PROXY_DISPLAY
           export HTTP_PROXY="$PROXY_URL"
           export HTTPS_PROXY="$PROXY_URL"
           export ALL_PROXY="$PROXY_URL"
@@ -193,6 +213,44 @@ jobs:
               export ARB_PROXY_VALIDATED=true
               echo "proxy_status=connected" >> "$GITHUB_OUTPUT"
               echo "Proxy status: CONNECTED. Starting detector with proxy-only API routing."
+              # Send the single Discord startup notice here rather than waiting
+              # for the detector, so it explicitly confirms the validated
+              # route even if later detector configuration fails. Discord
+              # notices intentionally bypass the market-data proxy; all market
+              # and bookmaker sessions remain proxy-pinned.
+              if [ -n "${DISCORD_WEBHOOK_URL:-}" ] && python - <<'PY'
+          import os
+          from pathlib import Path
+          import requests
+
+          def discord_enabled():
+              value = 'true'
+              try:
+                  for raw in Path('env_LM').read_text(encoding='utf-8').splitlines():
+                      line = raw.strip()
+                      if line.startswith('ARB_ENABLE_DISCORD_LOGS='):
+                          value = line.split('=', 1)[1].strip().strip("\"'")
+              except OSError:
+                  pass
+              return value.lower() in ('1', 'true', 'yes', 'on')
+
+          url = os.environ.get('DISCORD_WEBHOOK_URL', '').strip()
+          if not (url and discord_enabled()):
+              raise SystemExit(1)
+          display = os.environ.get('ARB_PROXY_DISPLAY', 'proxy validated')
+          try:
+              with requests.Session() as session:
+                  session.trust_env = False
+                  response = session.post(url, json={'content': (
+                      f"🟢 **Arb monitor started** · proxy validated · `{display}`"
+                  )}, timeout=10)
+              raise SystemExit(0 if 200 <= response.status_code < 300 else 1)
+          except requests.RequestException:
+              raise SystemExit(1)
+          PY
+              then
+                export ARB_STARTUP_NOTIFIED=true
+              fi
               break
             fi
             echo "Proxy status: NOT CONNECTED; no direct detector API query has been started."
@@ -224,7 +282,7 @@ jobs:
       # Runtime scan errors are sent by the detector's Discord error handler.
       # This catches workflow/setup failures that occur before Python starts.
       - name: Notify workflow failure to Discord
-        if: failure()
+        if: failure() || cancelled()
         continue-on-error: true
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -241,14 +299,16 @@ jobs:
           python - <<'PY'
           import os
           import requests
-          raw = os.getenv('ARB_ENABLE_DISCORD_LOGS', os.getenv('ENABLE_DISCORD_LOGS', ''))
+          raw = os.getenv('ARB_ENABLE_DISCORD_LOGS', os.getenv('ENABLE_DISCORD_LOGS', 'true'))
           enabled = raw.lower() in ('1', 'true', 'yes', 'on')
           url = os.getenv('DISCORD_WEBHOOK_URL', '').strip()
           if enabled and url:
-              requests.post(url, json={'content': (
-                  f"🔴 **Arb workflow failure** · `{os.getenv('REPOSITORY')}` · run `{os.getenv('RUN_ID')}`\n"
-                  f"Reason: {os.getenv('FAILURE_REASON', 'workflow or setup failure')}"
-              )}, timeout=10)
+              with requests.Session() as session:
+                  session.trust_env = False
+                  session.post(url, json={'content': (
+                      f"🔴 **Arb workflow failure** · `{os.getenv('REPOSITORY')}` · run `{os.getenv('RUN_ID')}`\n"
+                      f"Reason: {os.getenv('FAILURE_REASON', 'workflow or setup failure')}"
+                  )}, timeout=10)
           PY
 
       # Same continuous auto-chain pattern as the supplied workflow. The
@@ -262,9 +322,32 @@ jobs:
           # The same PAT can read the private detector repository and dispatch
           # this public controller workflow. github.token remains a fallback.
           GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || vars.PRIVATE_REPO_TOKEN || github.token }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          REPOSITORY: ${{ github.repository }}
           WORKFLOW_FILE: arb-monitor_LM.yml
         run: |
           set -u
+          # A failed continuation dispatch is non-fatal so the scheduled
+          # recovery trigger can still run, but it must be visible on Discord.
+          send_dispatch_error() {
+            if [ -f env_LM ]; then
+              set -a
+              . ./env_LM
+              set +a
+            fi
+            python - <<'PY'
+          import os
+          import requests
+          enabled = os.getenv('ARB_ENABLE_DISCORD_LOGS', os.getenv('ENABLE_DISCORD_LOGS', 'true')).lower() in ('1', 'true', 'yes', 'on')
+          url = os.getenv('DISCORD_WEBHOOK_URL', '').strip()
+          if enabled and url:
+              with requests.Session() as session:
+                  session.trust_env = False
+                  session.post(url, json={'content': {
+                      'content': f"🔴 **Arb auto-chain error** · `{os.getenv('REPOSITORY')}`\nUnable to dispatch the next monitor run; scheduled recovery remains enabled."
+                  }, timeout=10)
+          PY
+          }
           sleep 10
           target_workflow="${WORKFLOW_FILE}"
           if [ -n "${GITHUB_WORKFLOW_REF:-}" ]; then
@@ -286,5 +369,7 @@ jobs:
             [ "$status" = "204" ] && exit 0
           fi
 
-          # Non-fatal: scheduled workflow is the recovery mechanism.
+          # Non-fatal: scheduled workflow is the recovery mechanism, but
+          # Discord receives this operational error immediately.
+          send_dispatch_error
           exit 0
