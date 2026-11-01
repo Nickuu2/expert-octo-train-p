@@ -56,6 +56,20 @@ jobs:
           # Do not retain the PAT in the local Git config after checkout.
           persist-credentials: false
 
+      - name: Verify private detector checkout
+        run: |
+          set -euo pipefail
+          if [ ! -f "arb_detector_LM.py" ] || \
+             [ ! -f "requirements_LM" ] || \
+             [ ! -f "env_LM" ]; then
+            echo "::error::The private detector checkout is missing one or more LM files."
+            echo "Expected: arb_detector_LM.py, requirements_LM, env_LM"
+            echo "Files actually checked out from the private repository:"
+            find . -maxdepth 2 -type f -printf '%P\n' | sort
+            exit 1
+          fi
+          echo "Private detector checkout verified: LM source, requirements, and env file are present."
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -66,7 +80,6 @@ jobs:
       - name: Install detector dependencies
         run: |
           set -euo pipefail
-          test -f requirements_LM || { echo "::error::Private detector repository is missing requirements_LM"; exit 1; }
           python -m pip install --upgrade pip
           pip install -r requirements_LM
 
@@ -82,31 +95,29 @@ jobs:
             arb-discord-dedupe-lm-
 
       - name: Run monitor
+        id: run_monitor
         env:
           # arb_detector_LM.py loads only env_LM from this checked-out private
-          # repository. These Actions values take precedence over that file.
-          # Use Actions Variables for normal config and Secrets for balances.
-          ARB_SCAN_INTERVAL_SEC: ${{ vars.ARB_SCAN_INTERVAL_SEC || '30' }}
-          ARB_MIN_PROFIT_PCT: ${{ vars.ARB_MIN_PROFIT_PCT || '0.50' }}
-          ARB_MAX_PROFIT_PCT: ${{ vars.ARB_MAX_PROFIT_PCT || '20' }}
-          ARB_STAKE: ${{ secrets.ARB_STAKE || vars.ARB_STAKE || '63' }}
+          # repository. Non-empty Actions values override env_LM; absent values
+          # are deliberately left blank so env_LM remains the source of truth.
+          # Put sensitive balance overrides in Secrets, if desired.
+          ARB_SCAN_INTERVAL_SEC: ${{ vars.ARB_SCAN_INTERVAL_SEC }}
+          ARB_MIN_PROFIT_PCT: ${{ vars.ARB_MIN_PROFIT_PCT }}
+          ARB_MAX_PROFIT_PCT: ${{ vars.ARB_MAX_PROFIT_PCT }}
+          ARB_STAKE: ${{ secrets.ARB_STAKE || vars.ARB_STAKE }}
           ARB_DUEL_BALANCE: ${{ secrets.ARB_DUEL_BALANCE || vars.ARB_DUEL_BALANCE }}
           ARB_POLYMARKET_BALANCE: ${{ secrets.ARB_POLYMARKET_BALANCE || vars.ARB_POLYMARKET_BALANCE }}
-          ARB_MIN_DEPTH: ${{ vars.ARB_MIN_DEPTH || '0' }}
-          ARB_DUEL_STAKE_STEP: ${{ vars.ARB_DUEL_STAKE_STEP || '1' }}
-          ARB_POLY_STAKE_STEP: ${{ vars.ARB_POLY_STAKE_STEP || '0.01' }}
-          ARB_FEE_PCT: ${{ vars.ARB_FEE_PCT || '0' }}
-          ARB_DISCOVERY_ONLY: ${{ vars.ARB_DISCOVERY_ONLY || '0' }}
+          ARB_MIN_DEPTH: ${{ vars.ARB_MIN_DEPTH }}
+          ARB_DUEL_STAKE_STEP: ${{ vars.ARB_DUEL_STAKE_STEP }}
+          ARB_POLY_STAKE_STEP: ${{ vars.ARB_POLY_STAKE_STEP }}
+          ARB_FEE_PCT: ${{ vars.ARB_FEE_PCT }}
+          ARB_DISCOVERY_ONLY: ${{ vars.ARB_DISCOVERY_ONLY }}
 
-          # Keep GitHub Actions logs quiet. Discord receives startup, graceful
-          # end, real fully-filtered arbs, and errors only.
-          ENABLE_CONSOLE_LOGS: ${{ vars.ENABLE_CONSOLE_LOGS || 'false' }}
-          ENABLE_DISCORD_LOGS: ${{ vars.ENABLE_DISCORD_LOGS || 'true' }}
+          # env_LM owns console/Discord enablement and the 5.5-hour runtime.
+          # The webhook stays exclusively in a public-controller Actions Secret.
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # Keep this cache path aligned with ARB_DISCORD_DEDUPE_FILE in env_LM.
           ARB_DISCORD_DEDUPE_FILE: .arb_discord_notified_LM.json
-
-          # End cleanly before Actions' hard job timeout so auto-chain runs.
-          ARB_MAX_RUNTIME_SEC: ${{ vars.ARB_MAX_RUNTIME_SEC || '19800' }}
           PYTHONUNBUFFERED: "1"
 
           # Optional only when --duel-source aggregate is selected.
@@ -120,8 +131,8 @@ jobs:
           PROXY_PORT: ${{ secrets.PROXY_PORT || vars.PROXY_PORT }}
           PROXY_USERNAME: ${{ secrets.PROXY_USERNAME || vars.PROXY_USERNAME }}
           PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD || vars.PROXY_PASSWORD }}
-          PROXY_MAX_RETRIES: ${{ vars.PROXY_MAX_RETRIES || '12' }}
-          PROXY_RETRY_DELAY_SEC: ${{ vars.PROXY_RETRY_DELAY_SEC || '30' }}
+          PROXY_MAX_RETRIES: ${{ vars.PROXY_MAX_RETRIES || '3' }}
+          PROXY_RETRY_DELAY_SEC: ${{ vars.PROXY_RETRY_DELAY_SEC || '10' }}
           # The health check itself is forced through the proxy. Do not point
           # it at a direct/internal endpoint.
           PROXY_HEALTHCHECK_URL: ${{ vars.PROXY_HEALTHCHECK_URL || 'https://gamma-api.polymarket.com/sports?limit=1' }}
@@ -132,15 +143,18 @@ jobs:
           if [ "${USE_PROXY,,}" != "true" ] && [ "$USE_PROXY" != "1" ]; then
             echo "::error::Proxy is disabled. Refusing to start a hosted monitor with direct egress."
             echo "Proxy status: NOT CONNECTED (direct API calls are blocked by policy)."
+            echo "proxy_status=proxy disabled by USE_PROXY" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           if [ -z "$PROXY_IP" ] || [ -z "$PROXY_PORT" ]; then
             echo "::error::Proxy is enabled but PROXY_IP or PROXY_PORT is missing."
             echo "Proxy status: NOT CONNECTED. The next auto-chained run will retry."
+            echo "proxy_status=proxy host or port missing" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           if ! [[ "$PROXY_MAX_RETRIES" =~ ^[1-9][0-9]*$ ]] || ! [[ "$PROXY_RETRY_DELAY_SEC" =~ ^[0-9]+$ ]]; then
             echo "::error::PROXY_MAX_RETRIES must be a positive integer and PROXY_RETRY_DELAY_SEC a non-negative integer."
+            echo "proxy_status=invalid proxy retry configuration" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           PROXY_URL=$(python - <<'PY'
@@ -171,11 +185,13 @@ jobs:
             echo "Proxy status: checking connection (attempt ${attempt}/${PROXY_MAX_RETRIES})..."
             # --proxy plus --noproxy '' makes this a fail-closed check: if the
             # proxy is down, curl cannot contact the health endpoint directly.
-            if curl --fail --silent --show-error --location \
+            if timeout 25s curl --fail --silent --show-error --location \
                 --proxy "$PROXY_URL" --noproxy '' \
-                --connect-timeout 15 --max-time 30 \
+                --proxy-connect-timeout 10 --connect-timeout 10 --max-time 20 \
                 "$PROXY_HEALTHCHECK_URL" -o /dev/null; then
               proxy_ready=true
+              export ARB_PROXY_VALIDATED=true
+              echo "proxy_status=connected" >> "$GITHUB_OUTPUT"
               echo "Proxy status: CONNECTED. Starting detector with proxy-only API routing."
               break
             fi
@@ -187,13 +203,14 @@ jobs:
           done
           if [ "$proxy_ready" != "true" ]; then
             echo "::error::Proxy did not become reachable after ${PROXY_MAX_RETRIES} attempts; detector was not started."
+            echo "proxy_status=proxy validation failed after ${PROXY_MAX_RETRIES} attempts" >> "$GITHUB_OUTPUT"
             # The final auto-chain step runs on failure and starts the next
             # bounded worker, providing continued retry without direct egress.
             exit 1
           fi
 
-          # The detector suppresses its own console/report output when
-          # ENABLE_CONSOLE_LOGS=false. Redirecting is an extra guard so Actions
+          # env_LM sets ARB_ENABLE_CONSOLE_LOGS=false. Redirecting is an extra
+          # guard so Actions
           # remains silent while Discord receives only the configured alerts.
           python arb_detector_LM.py > /dev/null 2>&1
 
@@ -210,20 +227,27 @@ jobs:
         if: failure()
         continue-on-error: true
         env:
-          ENABLE_DISCORD_LOGS: ${{ vars.ENABLE_DISCORD_LOGS || 'true' }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           RUN_ID: ${{ github.run_id }}
           REPOSITORY: ${{ github.repository }}
+          FAILURE_REASON: ${{ steps.run_monitor.outputs.proxy_status || 'workflow or setup failure' }}
         run: |
+          # Use the same LM config as the detector for Discord on/off state.
+          if [ -f env_LM ]; then
+            set -a
+            . ./env_LM
+            set +a
+          fi
           python - <<'PY'
           import os
           import requests
-          enabled = os.getenv('ENABLE_DISCORD_LOGS', '').lower() in ('1', 'true', 'yes', 'on')
+          raw = os.getenv('ARB_ENABLE_DISCORD_LOGS', os.getenv('ENABLE_DISCORD_LOGS', ''))
+          enabled = raw.lower() in ('1', 'true', 'yes', 'on')
           url = os.getenv('DISCORD_WEBHOOK_URL', '').strip()
           if enabled and url:
               requests.post(url, json={'content': (
                   f"🔴 **Arb workflow failure** · `{os.getenv('REPOSITORY')}` · run `{os.getenv('RUN_ID')}`\n"
-                  "Check the GitHub Actions run for setup/workflow failure details."
+                  f"Reason: {os.getenv('FAILURE_REASON', 'workflow or setup failure')}"
               )}, timeout=10)
           PY
 
