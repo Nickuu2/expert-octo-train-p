@@ -187,7 +187,7 @@ jobs:
             # proxy is down, curl cannot contact the health endpoint directly.
             if timeout 25s curl --fail --silent --show-error --location \
                 --proxy "$PROXY_URL" --noproxy '' \
-                --proxy-connect-timeout 10 --connect-timeout 10 --max-time 20 \
+                --connect-timeout 10 --max-time 20 \
                 "$PROXY_HEALTHCHECK_URL" -o /dev/null; then
               proxy_ready=true
               export ARB_PROXY_VALIDATED=true
