@@ -1,0 +1,266 @@
+name: Pre-Match Arb Monitor LM
+
+on:
+  workflow_dispatch:
+  # Recovery trigger in case an auto-dispatch is denied or a GitHub outage interrupts a chain.
+  schedule:
+    - cron: "17 */6 * * *"
+
+concurrency:
+  group: pre-match-arb-monitor-lm
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    # GitHub-hosted jobs have a finite maximum duration. The Python monitor exits
+    # cleanly before this and the final step dispatches the next workflow run.
+    timeout-minutes: 355
+
+    steps:
+      # This workflow belongs in the PUBLIC controller repository. It runs the
+      # detector code from the configured private repository, matching the
+      # supplied worker workflow's PRIVATE_REPO_NAME/TOKEN arrangement.
+      - name: Validate and prepare private detector repository
+        id: private_repo
+        env:
+          RAW_REPO: ${{ secrets.PRIVATE_REPO_NAME || vars.PRIVATE_REPO_NAME }}
+          PRIVATE_REPO_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || vars.PRIVATE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PRIVATE_REPO_TOKEN" ]; then
+            echo "::error::PRIVATE_REPO_TOKEN is missing. Add a PAT with access to the private detector repository."
+            exit 1
+          fi
+          if [ -z "$RAW_REPO" ]; then
+            echo "::error::PRIVATE_REPO_NAME is missing. Set it to owner/private-detector-repository."
+            exit 1
+          fi
+          target=$(printf '%s' "$RAW_REPO" | sed -e 's|https://github.com/||' -e 's|http://github.com/||' -e 's|\.git$||' -e 's|^/||' -e 's|/$||')
+          if ! printf '%s' "$target" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'; then
+            echo "::error::PRIVATE_REPO_NAME must be owner/repository (or its GitHub URL)."
+            exit 1
+          fi
+          echo "repository=$target" >> "$GITHUB_OUTPUT"
+          echo "Private detector repository target validated."
+
+      - name: Checkout private detector repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.private_repo.outputs.repository }}
+          token: ${{ secrets.PRIVATE_REPO_TOKEN || vars.PRIVATE_REPO_TOKEN }}
+          # Do not retain the PAT in the local Git config after checkout.
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements_LM
+
+      - name: Install detector dependencies
+        run: |
+          set -euo pipefail
+          test -f requirements_LM || { echo "::error::Private detector repository is missing requirements_LM"; exit 1; }
+          python -m pip install --upgrade pip
+          pip install -r requirements_LM
+
+      # The detector itself writes this small JSON file when it sends a Discord
+      # arb alert. Restoring/saving it prevents the same future fixture+market
+      # from being announced again after the self-dispatched continuation run.
+      - name: Restore Discord notification dedupe state
+        uses: actions/cache/restore@v4
+        with:
+          path: .arb_discord_notified_LM.json
+          key: arb-discord-dedupe-lm-${{ github.run_id }}
+          restore-keys: |
+            arb-discord-dedupe-lm-
+
+      - name: Run monitor
+        env:
+          # arb_detector_LM.py loads only env_LM from this checked-out private
+          # repository. These Actions values take precedence over that file.
+          # Use Actions Variables for normal config and Secrets for balances.
+          ARB_SCAN_INTERVAL_SEC: ${{ vars.ARB_SCAN_INTERVAL_SEC || '30' }}
+          ARB_MIN_PROFIT_PCT: ${{ vars.ARB_MIN_PROFIT_PCT || '0.50' }}
+          ARB_MAX_PROFIT_PCT: ${{ vars.ARB_MAX_PROFIT_PCT || '20' }}
+          ARB_STAKE: ${{ secrets.ARB_STAKE || vars.ARB_STAKE || '63' }}
+          ARB_DUEL_BALANCE: ${{ secrets.ARB_DUEL_BALANCE || vars.ARB_DUEL_BALANCE }}
+          ARB_POLYMARKET_BALANCE: ${{ secrets.ARB_POLYMARKET_BALANCE || vars.ARB_POLYMARKET_BALANCE }}
+          ARB_MIN_DEPTH: ${{ vars.ARB_MIN_DEPTH || '0' }}
+          ARB_DUEL_STAKE_STEP: ${{ vars.ARB_DUEL_STAKE_STEP || '1' }}
+          ARB_POLY_STAKE_STEP: ${{ vars.ARB_POLY_STAKE_STEP || '0.01' }}
+          ARB_FEE_PCT: ${{ vars.ARB_FEE_PCT || '0' }}
+          ARB_DISCOVERY_ONLY: ${{ vars.ARB_DISCOVERY_ONLY || '0' }}
+
+          # Keep GitHub Actions logs quiet. Discord receives startup, graceful
+          # end, real fully-filtered arbs, and errors only.
+          ENABLE_CONSOLE_LOGS: ${{ vars.ENABLE_CONSOLE_LOGS || 'false' }}
+          ENABLE_DISCORD_LOGS: ${{ vars.ENABLE_DISCORD_LOGS || 'true' }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          ARB_DISCORD_DEDUPE_FILE: .arb_discord_notified_LM.json
+
+          # End cleanly before Actions' hard job timeout so auto-chain runs.
+          ARB_MAX_RUNTIME_SEC: ${{ vars.ARB_MAX_RUNTIME_SEC || '19800' }}
+          PYTHONUNBUFFERED: "1"
+
+          # Optional only when --duel-source aggregate is selected.
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+
+          # Proxy configuration copied from the supplied workflow convention.
+          # This hosted worker is proxy-only by default: it fails closed rather
+          # than contacting market/bookmaker APIs from a GitHub runner IP.
+          USE_PROXY: ${{ secrets.USE_PROXY || vars.USE_PROXY || 'true' }}
+          PROXY_IP: ${{ secrets.PROXY_IP || vars.PROXY_IP }}
+          PROXY_PORT: ${{ secrets.PROXY_PORT || vars.PROXY_PORT }}
+          PROXY_USERNAME: ${{ secrets.PROXY_USERNAME || vars.PROXY_USERNAME }}
+          PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD || vars.PROXY_PASSWORD }}
+          PROXY_MAX_RETRIES: ${{ vars.PROXY_MAX_RETRIES || '12' }}
+          PROXY_RETRY_DELAY_SEC: ${{ vars.PROXY_RETRY_DELAY_SEC || '30' }}
+          # The health check itself is forced through the proxy. Do not point
+          # it at a direct/internal endpoint.
+          PROXY_HEALTHCHECK_URL: ${{ vars.PROXY_HEALTHCHECK_URL || 'https://gamma-api.polymarket.com/sports?limit=1' }}
+          ARB_REQUIRE_PROXY: "true"
+        run: |
+          set -euo pipefail
+
+          if [ "${USE_PROXY,,}" != "true" ] && [ "$USE_PROXY" != "1" ]; then
+            echo "::error::Proxy is disabled. Refusing to start a hosted monitor with direct egress."
+            echo "Proxy status: NOT CONNECTED (direct API calls are blocked by policy)."
+            exit 1
+          fi
+          if [ -z "$PROXY_IP" ] || [ -z "$PROXY_PORT" ]; then
+            echo "::error::Proxy is enabled but PROXY_IP or PROXY_PORT is missing."
+            echo "Proxy status: NOT CONNECTED. The next auto-chained run will retry."
+            exit 1
+          fi
+          if ! [[ "$PROXY_MAX_RETRIES" =~ ^[1-9][0-9]*$ ]] || ! [[ "$PROXY_RETRY_DELAY_SEC" =~ ^[0-9]+$ ]]; then
+            echo "::error::PROXY_MAX_RETRIES must be a positive integer and PROXY_RETRY_DELAY_SEC a non-negative integer."
+            exit 1
+          fi
+          PROXY_URL=$(python - <<'PY'
+          import os
+          from urllib.parse import quote
+          host = os.environ['PROXY_IP'].strip()
+          port = os.environ['PROXY_PORT'].strip()
+          user = os.environ.get('PROXY_USERNAME', '')
+          password = os.environ.get('PROXY_PASSWORD', '')
+          auth = f"{quote(user, safe='')}:{quote(password, safe='')}@" if user else ''
+          print(f"http://{auth}{host}:{port}")
+          PY
+          )
+          echo "::add-mask::$PROXY_URL"
+          export HTTP_PROXY="$PROXY_URL"
+          export HTTPS_PROXY="$PROXY_URL"
+          export ALL_PROXY="$PROXY_URL"
+          export http_proxy="$PROXY_URL"
+          export https_proxy="$PROXY_URL"
+          export all_proxy="$PROXY_URL"
+          # Empty NO_PROXY prevents requests/curl from bypassing the proxy for
+          # a matching host inherited from the Actions runner environment.
+          export NO_PROXY=""
+          export no_proxy=""
+
+          proxy_ready=false
+          for attempt in $(seq 1 "$PROXY_MAX_RETRIES"); do
+            echo "Proxy status: checking connection (attempt ${attempt}/${PROXY_MAX_RETRIES})..."
+            # --proxy plus --noproxy '' makes this a fail-closed check: if the
+            # proxy is down, curl cannot contact the health endpoint directly.
+            if curl --fail --silent --show-error --location \
+                --proxy "$PROXY_URL" --noproxy '' \
+                --connect-timeout 15 --max-time 30 \
+                "$PROXY_HEALTHCHECK_URL" -o /dev/null; then
+              proxy_ready=true
+              echo "Proxy status: CONNECTED. Starting detector with proxy-only API routing."
+              break
+            fi
+            echo "Proxy status: NOT CONNECTED; no direct detector API query has been started."
+            if [ "$attempt" -lt "$PROXY_MAX_RETRIES" ]; then
+              echo "Retrying proxy connection in ${PROXY_RETRY_DELAY_SEC}s..."
+              sleep "$PROXY_RETRY_DELAY_SEC"
+            fi
+          done
+          if [ "$proxy_ready" != "true" ]; then
+            echo "::error::Proxy did not become reachable after ${PROXY_MAX_RETRIES} attempts; detector was not started."
+            # The final auto-chain step runs on failure and starts the next
+            # bounded worker, providing continued retry without direct egress.
+            exit 1
+          fi
+
+          # The detector suppresses its own console/report output when
+          # ENABLE_CONSOLE_LOGS=false. Redirecting is an extra guard so Actions
+          # remains silent while Discord receives only the configured alerts.
+          python arb_detector_LM.py > /dev/null 2>&1
+
+      - name: Save Discord notification dedupe state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .arb_discord_notified_LM.json
+          key: arb-discord-dedupe-lm-${{ github.run_id }}
+
+      # Runtime scan errors are sent by the detector's Discord error handler.
+      # This catches workflow/setup failures that occur before Python starts.
+      - name: Notify workflow failure to Discord
+        if: failure()
+        continue-on-error: true
+        env:
+          ENABLE_DISCORD_LOGS: ${{ vars.ENABLE_DISCORD_LOGS || 'true' }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RUN_ID: ${{ github.run_id }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python - <<'PY'
+          import os
+          import requests
+          enabled = os.getenv('ENABLE_DISCORD_LOGS', '').lower() in ('1', 'true', 'yes', 'on')
+          url = os.getenv('DISCORD_WEBHOOK_URL', '').strip()
+          if enabled and url:
+              requests.post(url, json={'content': (
+                  f"🔴 **Arb workflow failure** · `{os.getenv('REPOSITORY')}` · run `{os.getenv('RUN_ID')}`\n"
+                  "Check the GitHub Actions run for setup/workflow failure details."
+              )}, timeout=10)
+          PY
+
+      # Same continuous auto-chain pattern as the supplied workflow. The
+      # PRIVATE_REPO_TOKEN PAT is used for reliable re-dispatch of this public
+      # controller; the repository GITHUB_TOKEN is only a fallback. The cron
+      # trigger above is a recovery path if dispatch is unavailable.
+      - name: Trigger next continuous run
+        if: always()
+        continue-on-error: true
+        env:
+          # The same PAT can read the private detector repository and dispatch
+          # this public controller workflow. github.token remains a fallback.
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || vars.PRIVATE_REPO_TOKEN || github.token }}
+          WORKFLOW_FILE: arb-monitor_LM.yml
+        run: |
+          set -u
+          sleep 10
+          target_workflow="${WORKFLOW_FILE}"
+          if [ -n "${GITHUB_WORKFLOW_REF:-}" ]; then
+            detected=$(echo "$GITHUB_WORKFLOW_REF" | sed -e 's|.*\.github/workflows/||' -e 's|@.*||')
+            [ -n "$detected" ] && target_workflow="$detected"
+          fi
+
+          if command -v gh >/dev/null 2>&1 && \
+             gh workflow run "$target_workflow" --repo "$GITHUB_REPOSITORY" --ref "${GITHUB_REF_NAME:-main}"; then
+            exit 0
+          fi
+
+          if [ -n "${GH_TOKEN:-}" ]; then
+            status=$(curl -sS -o /dev/null -w "%{http_code}" \
+              -X POST "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/${target_workflow}/dispatches" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -d "{\"ref\":\"${GITHUB_REF_NAME:-main}\"}")
+            [ "$status" = "204" ] && exit 0
+          fi
+
+          # Non-fatal: scheduled workflow is the recovery mechanism.
+          exit 0
