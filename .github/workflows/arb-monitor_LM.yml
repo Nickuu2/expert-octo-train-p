@@ -215,9 +215,8 @@ jobs:
               echo "Proxy status: CONNECTED. Starting detector with proxy-only API routing."
               # Send the single Discord startup notice here rather than waiting
               # for the detector, so it explicitly confirms the validated
-              # route even if later detector configuration fails. Discord
-              # notices intentionally bypass the market-data proxy; all market
-              # and bookmaker sessions remain proxy-pinned.
+              # route even if later detector configuration fails. This POST is
+              # explicitly proxy-pinned too; it has no direct fallback.
               if [ -n "${DISCORD_WEBHOOK_URL:-}" ] && python - <<'PY'
           import os
           from pathlib import Path
@@ -239,8 +238,12 @@ jobs:
               raise SystemExit(1)
           display = os.environ.get('ARB_PROXY_DISPLAY', 'proxy validated')
           try:
+              proxy = os.environ.get('HTTPS_PROXY', '').strip()
+              if not proxy:
+                  raise SystemExit(1)
               with requests.Session() as session:
                   session.trust_env = False
+                  session.proxies.update({'http': proxy, 'https': proxy})
                   response = session.post(url, json={'content': (
                       f"🟢 **Arb monitor started** · proxy validated · `{display}`"
                   )}, timeout=10)
@@ -289,6 +292,11 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           REPOSITORY: ${{ github.repository }}
           FAILURE_REASON: ${{ steps.run_monitor.outputs.proxy_status || 'workflow or setup failure' }}
+          USE_PROXY: ${{ secrets.USE_PROXY || vars.USE_PROXY || 'true' }}
+          PROXY_IP: ${{ secrets.PROXY_IP || vars.PROXY_IP }}
+          PROXY_PORT: ${{ secrets.PROXY_PORT || vars.PROXY_PORT }}
+          PROXY_USERNAME: ${{ secrets.PROXY_USERNAME || vars.PROXY_USERNAME }}
+          PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD || vars.PROXY_PASSWORD }}
         run: |
           # Use the same LM config as the detector for Discord on/off state.
           if [ -f env_LM ]; then
@@ -297,18 +305,31 @@ jobs:
             set +a
           fi
           python - <<'PY'
+          import json
           import os
-          import requests
+          import urllib.request
+          from urllib.parse import quote
           raw = os.getenv('ARB_ENABLE_DISCORD_LOGS', os.getenv('ENABLE_DISCORD_LOGS', 'true'))
           enabled = raw.lower() in ('1', 'true', 'yes', 'on')
           url = os.getenv('DISCORD_WEBHOOK_URL', '').strip()
           if enabled and url:
-              with requests.Session() as session:
-                  session.trust_env = False
-                  session.post(url, json={'content': (
-                      f"🔴 **Arb workflow failure** · `{os.getenv('REPOSITORY')}` · run `{os.getenv('RUN_ID')}`\n"
-                      f"Reason: {os.getenv('FAILURE_REASON', 'workflow or setup failure')}"
-                  )}, timeout=10)
+              use_proxy = os.getenv('USE_PROXY', '').lower() in ('1', 'true', 'yes', 'on')
+              host, port = os.getenv('PROXY_IP', '').strip(), os.getenv('PROXY_PORT', '').strip()
+              if not (use_proxy and host and port):
+                  raise SystemExit(0)  # fail closed: never send direct from Actions
+              user, password = os.getenv('PROXY_USERNAME', ''), os.getenv('PROXY_PASSWORD', '')
+              auth = f"{quote(user, safe='')}:{quote(password, safe='')}@" if user else ''
+              proxy = f"http://{auth}{host}:{port}"
+              data = json.dumps({'content': (
+                  f"🔴 **Arb workflow failure** · `{os.getenv('REPOSITORY')}` · run `{os.getenv('RUN_ID')}`\n"
+                  f"Reason: {os.getenv('FAILURE_REASON', 'workflow or setup failure')}"
+              )}).encode('utf-8')
+              request = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+              opener = urllib.request.build_opener(urllib.request.ProxyHandler({'http': proxy, 'https': proxy}))
+              try:
+                  opener.open(request, timeout=10).close()
+              except Exception:
+                  pass
           PY
 
       # Same continuous auto-chain pattern as the supplied workflow. The
@@ -324,6 +345,11 @@ jobs:
           GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN || vars.PRIVATE_REPO_TOKEN || github.token }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           REPOSITORY: ${{ github.repository }}
+          USE_PROXY: ${{ secrets.USE_PROXY || vars.USE_PROXY || 'true' }}
+          PROXY_IP: ${{ secrets.PROXY_IP || vars.PROXY_IP }}
+          PROXY_PORT: ${{ secrets.PROXY_PORT || vars.PROXY_PORT }}
+          PROXY_USERNAME: ${{ secrets.PROXY_USERNAME || vars.PROXY_USERNAME }}
+          PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD || vars.PROXY_PASSWORD }}
           WORKFLOW_FILE: arb-monitor_LM.yml
         run: |
           set -u
@@ -336,16 +362,27 @@ jobs:
               set +a
             fi
             python - <<'PY'
+          import json
           import os
-          import requests
+          import urllib.request
+          from urllib.parse import quote
           enabled = os.getenv('ARB_ENABLE_DISCORD_LOGS', os.getenv('ENABLE_DISCORD_LOGS', 'true')).lower() in ('1', 'true', 'yes', 'on')
           url = os.getenv('DISCORD_WEBHOOK_URL', '').strip()
           if enabled and url:
-              with requests.Session() as session:
-                  session.trust_env = False
-                  session.post(url, json={'content': {
-                      'content': f"🔴 **Arb auto-chain error** · `{os.getenv('REPOSITORY')}`\nUnable to dispatch the next monitor run; scheduled recovery remains enabled."
-                  }, timeout=10)
+              use_proxy = os.getenv('USE_PROXY', '').lower() in ('1', 'true', 'yes', 'on')
+              host, port = os.getenv('PROXY_IP', '').strip(), os.getenv('PROXY_PORT', '').strip()
+              if not (use_proxy and host and port):
+                  raise SystemExit(0)  # fail closed: never send direct from Actions
+              user, password = os.getenv('PROXY_USERNAME', ''), os.getenv('PROXY_PASSWORD', '')
+              auth = f"{quote(user, safe='')}:{quote(password, safe='')}@" if user else ''
+              proxy = f"http://{auth}{host}:{port}"
+              data = json.dumps({'content': f"🔴 **Arb auto-chain error** · `{os.getenv('REPOSITORY')}`\nUnable to dispatch the next monitor run; scheduled recovery remains enabled."}).encode('utf-8')
+              request = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+              opener = urllib.request.build_opener(urllib.request.ProxyHandler({'http': proxy, 'https': proxy}))
+              try:
+                  opener.open(request, timeout=10).close()
+              except Exception:
+                  pass
           PY
           }
           sleep 10
